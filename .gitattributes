@@ -26,6 +26,16 @@ stubs export-ignore
 tests export-ignore
 packages-tests export-ignore
 rules-tests export-ignore
+build export-ignore
+full_build.sh export-ignore
+Dockerfile export-ignore
+UPGRADE_09.md export-ignore
+rule-doc-generator.php export-ignore
+docs export-ignore
+scoper.php export-ignore
+.docker export-ignore$
+.github export-ignore
+.dockerignore export-ignore
 
 # testing Windows spaces - https://help.github.com/en/github/using-git/configuring-git-to-handle-line-endings
 packages/better-php-doc-parser/tests/PhpDocInfo/PhpDocInfoPrinter/FixtureBasic/with_spac.txt text eol=crlf

@@ -1,0 +1,63 @@
+name: Code Analysis
+
+on:
+    pull_request: null
+
+env:
+    # see https://github.com/composer/composer/issues/9368#issuecomment-718112361
+    COMPOSER_ROOT_VERSION: "dev-main"
+
+jobs:
+    code_analysis:
+        strategy:
+            fail-fast: false
+            matrix:
+                actions:
+                    -
+                        name: 'Composer Validate'
+                        run: composer validate --strict --ansi
+
+                    # make sure skipped files have "skip_" prefix
+                    -
+                        name: Validate Fixtures skip file prefix
+                        run: vendor/symplify/easy-testing/bin/easy-testing validate-fixture-skip-naming rules tests
+
+                    -
+                        name: 'Validate Max File Length'
+                        run: vendor/bin/easy-ci validate-file-length packages rules src tests
+
+                    -
+                        name: 'PHPStan'
+                        run: vendor/bin/phpstan analyse --ansi --error-format symplify
+
+                    -
+                        name: 'PHPStan for config'
+                        run: composer phpstan-config
+
+                    -
+                        name: "Check doctrine/annotation"
+                        run: "bin/rector sync-annotation-parser --dry-run --ansi"
+
+                    # see https://github.com/rectorphp/rector-generator
+                    -
+                        name: 'Rector Generate From Recipe'
+                        run: |
+                            bin/rector init-recipe --ansi
+                            bin/rector generate --ansi
+
+        name: ${{ matrix.actions.name }}
+        runs-on: ubuntu-latest
+
+        steps:
+            -   uses: actions/checkout@v2
+
+            # see https://github.com/shivammathur/setup-php
+            -
+                uses: shivammathur/setup-php@v2
+                with:
+                    php-version: 7.3
+                    coverage: none
+
+            -   uses: "ramsey/composer-install@v1"
+
+            -   run: ${{ matrix.actions.run }}
