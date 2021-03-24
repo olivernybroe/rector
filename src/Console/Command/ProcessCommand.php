@@ -17,7 +17,6 @@ use Rector\Core\Exception\ShouldNotHappenException;
 use Rector\Core\FileSystem\FilesFinder;
 use Rector\Core\FileSystem\PhpFilesFinder;
 use Rector\Core\NonPhpFile\NonPhpFileProcessor;
-use Rector\Core\PhpParser\NodeTraverser\RectorNodeTraverser;
 use Rector\Core\Reporting\MissingRectorRulesReporter;
 use Rector\Core\ValueObject\StaticNonPhpFileSuffixes;
 use Symfony\Component\Console\Application;
@@ -28,6 +27,8 @@ use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Style\SymfonyStyle;
 use Symplify\PackageBuilder\Console\ShellCode;
+use Symplify\PackageBuilder\Parameter\ParameterProvider;
+use Throwable;
 
 final class ProcessCommand extends Command
 {
@@ -62,11 +63,6 @@ final class ProcessCommand extends Command
     private $outputFormatterCollector;
 
     /**
-     * @var RectorNodeTraverser
-     */
-    private $rectorNodeTraverser;
-
-    /**
      * @var NonPhpFileProcessor
      */
     private $nonPhpFileProcessor;
@@ -96,6 +92,11 @@ final class ProcessCommand extends Command
      */
     private $missingRectorRulesReporter;
 
+    /**
+     * @var ParameterProvider
+     */
+    private $parameterProvider;
+
     public function __construct(
         AdditionalAutoloader $additionalAutoloader,
         ChangedFilesDetector $changedFilesDetector,
@@ -105,11 +106,11 @@ final class ProcessCommand extends Command
         NonPhpFileProcessor $nonPhpFileProcessor,
         OutputFormatterCollector $outputFormatterCollector,
         RectorApplication $rectorApplication,
-        RectorNodeTraverser $rectorNodeTraverser,
         SymfonyStyle $symfonyStyle,
         ComposerProcessor $composerProcessor,
         PhpFilesFinder $phpFilesFinder,
-        MissingRectorRulesReporter $missingRectorRulesReporter
+        MissingRectorRulesReporter $missingRectorRulesReporter,
+        ParameterProvider $parameterProvider
     ) {
         $this->filesFinder = $filesFinder;
         $this->additionalAutoloader = $additionalAutoloader;
@@ -117,7 +118,6 @@ final class ProcessCommand extends Command
         $this->configuration = $configuration;
         $this->rectorApplication = $rectorApplication;
         $this->outputFormatterCollector = $outputFormatterCollector;
-        $this->rectorNodeTraverser = $rectorNodeTraverser;
         $this->nonPhpFileProcessor = $nonPhpFileProcessor;
         $this->changedFilesDetector = $changedFilesDetector;
         $this->symfonyStyle = $symfonyStyle;
@@ -126,6 +126,7 @@ final class ProcessCommand extends Command
         $this->missingRectorRulesReporter = $missingRectorRulesReporter;
 
         parent::__construct();
+        $this->parameterProvider = $parameterProvider;
     }
 
     protected function configure(): void
@@ -201,6 +202,8 @@ final class ProcessCommand extends Command
         $paths = $this->configuration->getPaths();
         $phpFileInfos = $this->phpFilesFinder->findInPaths($paths);
 
+        // register autoloaded and included files
+        $this->includeBootstrapFiles();
         $this->additionalAutoloader->autoloadWithInputAndSource($input);
 
         if ($this->configuration->isCacheDebug()) {
@@ -222,8 +225,6 @@ final class ProcessCommand extends Command
 
         $composerJsonFilePath = getcwd() . '/composer.json';
         $this->composerProcessor->process($composerJsonFilePath);
-
-        $this->reportZeroCacheRectorsCondition();
 
         // report diffs and errors
         $outputFormat = (string) $input->getOption(Option::OPTION_OUTPUT_FORMAT);
@@ -271,32 +272,6 @@ final class ProcessCommand extends Command
         }
     }
 
-    private function reportZeroCacheRectorsCondition(): void
-    {
-        if (! $this->configuration->isCacheEnabled()) {
-            return;
-        }
-
-        if ($this->configuration->shouldClearCache()) {
-            return;
-        }
-
-        if (! $this->rectorNodeTraverser->hasZeroCacheRectors()) {
-            return;
-        }
-
-        if ($this->configuration->shouldHideClutter()) {
-            return;
-        }
-
-        $message = sprintf(
-            'Ruleset contains %d rules that need "--clear-cache" option to analyse full project',
-            $this->rectorNodeTraverser->getZeroCacheRectorCount()
-        );
-
-        $this->symfonyStyle->note($message);
-    }
-
     private function invalidateAffectedCacheFiles(): void
     {
         if (! $this->configuration->isCacheEnabled()) {
@@ -305,6 +280,36 @@ final class ProcessCommand extends Command
 
         foreach ($this->errorAndDiffCollector->getAffectedFileInfos() as $affectedFileInfo) {
             $this->changedFilesDetector->invalidateFile($affectedFileInfo);
+        }
+    }
+
+    /**
+     * Inspired by
+     * @see https://github.com/phpstan/phpstan-src/commit/aad1bf888ab7b5808898ee5fe2228bb8bb4e4cf1
+     */
+    private function includeBootstrapFiles(): void
+    {
+        $bootstrapFiles = $this->parameterProvider->provideArrayParameter(Option::BOOTSTRAP_FILES);
+
+        foreach ($bootstrapFiles as $bootstrapFile) {
+            if (! is_file($bootstrapFile)) {
+                throw new ShouldNotHappenException('Bootstrap file %s does not exist.', $bootstrapFile);
+            }
+
+            try {
+                require_once $bootstrapFile;
+            } catch (Throwable $throwable) {
+                $errorMessage = sprintf(
+                    '"%s" thrown in "%s" on line %d while loading bootstrap file %s: %s',
+                    get_class($throwable),
+                    $throwable->getFile(),
+                    $throwable->getLine(),
+                    $bootstrapFile,
+                    $throwable->getMessage()
+                );
+
+                throw new ShouldNotHappenException($errorMessage);
+            }
         }
     }
 }
